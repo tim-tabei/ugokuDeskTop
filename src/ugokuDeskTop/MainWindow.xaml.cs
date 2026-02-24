@@ -22,6 +22,7 @@ public partial class MainWindow : Window
     private DispatcherTimer? _audioTimer;
     private float[]? _latestFrequencyData;
     private readonly object _audioLock = new();
+    private FileSystemWatcher? _fileWatcher;
 
     public MainWindow()
     {
@@ -122,9 +123,7 @@ public partial class MainWindow : Window
     {
         if (!_webViewReady) return;
 
-        string wallpaperPath = Path.Combine(
-            AppDomain.CurrentDomain.BaseDirectory,
-            "Wallpapers", wallpaperName, "index.html");
+        string wallpaperPath = ResolveWallpaperPath(wallpaperName);
 
         if (File.Exists(wallpaperPath))
         {
@@ -132,7 +131,28 @@ public partial class MainWindow : Window
             _config.CurrentWallpaper = wallpaperName;
             _config.CustomUrl = null;
             _config.Save();
+            StartFileWatcher(Path.GetDirectoryName(wallpaperPath)!);
         }
+    }
+
+    /// <summary>
+    /// 壁紙の index.html パスを解決する。
+    /// 開発時はソースディレクトリ (src/ugokuDeskTop/Wallpapers/) を優先し、
+    /// esbuild の出力が直接反映されるようにする。
+    /// </summary>
+    private static string ResolveWallpaperPath(string wallpaperName)
+    {
+        // 開発時: プロジェクトのソースディレクトリを探す
+        // bin/Debug/net10.0-windows/ → 3階層上が ugokuDeskTop プロジェクトルート
+        var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        var projectDir = Path.GetFullPath(Path.Combine(baseDir, "..", "..", ".."));
+        var srcPath = Path.Combine(projectDir, "Wallpapers", wallpaperName, "index.html");
+
+        if (File.Exists(srcPath))
+            return srcPath;
+
+        // フォールバック: ビルド出力ディレクトリ（本番用）
+        return Path.Combine(baseDir, "Wallpapers", wallpaperName, "index.html");
     }
 
     public void LoadUrl(string url)
@@ -160,5 +180,42 @@ public partial class MainWindow : Window
         if (!_isEmbedded) return;
         WallpaperHelper.DetachWallpaper(_windowHandle);
         _isEmbedded = false;
+    }
+
+    // --- Hot Reload: 壁紙ディレクトリの .js/.html/.css を監視 ---
+    private void StartFileWatcher(string directory)
+    {
+        StopFileWatcher();
+
+        _fileWatcher = new FileSystemWatcher(directory)
+        {
+            NotifyFilter = NotifyFilters.LastWrite,
+            IncludeSubdirectories = false,
+            EnableRaisingEvents = true
+        };
+        _fileWatcher.Filters.Add("*.js");
+        _fileWatcher.Filters.Add("*.html");
+        _fileWatcher.Filters.Add("*.css");
+
+        // esbuild は短時間に複数回書き込むので、デバウンスする
+        DateTime lastReload = DateTime.MinValue;
+        _fileWatcher.Changed += (_, args) =>
+        {
+            var now = DateTime.Now;
+            if ((now - lastReload).TotalMilliseconds < 500) return;
+            lastReload = now;
+
+            Dispatcher.InvokeAsync(() =>
+            {
+                if (_webViewReady)
+                    webView.CoreWebView2.Reload();
+            });
+        };
+    }
+
+    private void StopFileWatcher()
+    {
+        _fileWatcher?.Dispose();
+        _fileWatcher = null;
     }
 }
