@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Windows.Forms;
+using ugokuDeskTop.Services;
 
 namespace ugokuDeskTop.TrayIcon;
 
@@ -28,21 +29,24 @@ internal class TrayIconManager : IDisposable
     {
         var menu = new ContextMenuStrip();
 
-        // 壁紙選択サブメニュー
+        // 壁紙選択サブメニュー（Wallpapers ディレクトリから自動検出）
         var wallpaperMenu = new ToolStripMenuItem("壁紙を選択");
-        wallpaperMenu.DropDownItems.Add("Starry Night", null,
-            (s, e) => _mainWindow.Dispatcher.Invoke(() => _mainWindow.LoadWallpaper("starry-night")));
-        wallpaperMenu.DropDownItems.Add("Particles", null,
-            (s, e) => _mainWindow.Dispatcher.Invoke(() => _mainWindow.LoadWallpaper("particles")));
-        wallpaperMenu.DropDownItems.Add("Gradient Wave", null,
-            (s, e) => _mainWindow.Dispatcher.Invoke(() => _mainWindow.LoadWallpaper("gradient-wave")));
-        wallpaperMenu.DropDownItems.Add("Shader Demo", null,
-            (s, e) => _mainWindow.Dispatcher.Invoke(() => _mainWindow.LoadWallpaper("shader-demo")));
-        wallpaperMenu.DropDownItems.Add("Fractal Tetrahedron", null,
-            (s, e) => _mainWindow.Dispatcher.Invoke(() => _mainWindow.LoadWallpaper("fractal-tetrahedron")));
-        wallpaperMenu.DropDownItems.Add(new ToolStripSeparator());
-        wallpaperMenu.DropDownItems.Add("Audio Visualizer", null,
-            (s, e) => _mainWindow.Dispatcher.Invoke(() => _mainWindow.LoadWallpaper("audio-visualizer")));
+        var wallpapers = WallpaperDiscoveryService.Discover();
+        bool separatorAdded = false;
+
+        foreach (var wp in wallpapers)
+        {
+            if (wp.IsSpecial && !separatorAdded)
+            {
+                wallpaperMenu.DropDownItems.Add(new ToolStripSeparator());
+                separatorAdded = true;
+            }
+
+            wallpaperMenu.DropDownItems.Add(wp.DisplayName, null,
+                (s, e) => _mainWindow.Dispatcher.Invoke(
+                    () => _mainWindow.LoadWallpaper(wp.DirectoryName)));
+        }
+
         menu.Items.Add(wallpaperMenu);
 
         menu.Items.Add(new ToolStripSeparator());
