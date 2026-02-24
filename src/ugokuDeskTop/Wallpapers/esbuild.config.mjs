@@ -36,6 +36,11 @@ const buildOptions = {
   target: "es2020",
   sourcemap: isWatch,
   minify: !isWatch,
+  loader: {
+    '.vert': 'text',
+    '.frag': 'text',
+    '.glsl': 'text',
+  },
 };
 
 if (isWatch) {

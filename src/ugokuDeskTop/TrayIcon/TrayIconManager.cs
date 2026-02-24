@@ -36,6 +36,8 @@ internal class TrayIconManager : IDisposable
             (s, e) => _mainWindow.Dispatcher.Invoke(() => _mainWindow.LoadWallpaper("gradient-wave")));
         wallpaperMenu.DropDownItems.Add("Shader Demo", null,
             (s, e) => _mainWindow.Dispatcher.Invoke(() => _mainWindow.LoadWallpaper("shader-demo")));
+        wallpaperMenu.DropDownItems.Add("Fractal Tetrahedron", null,
+            (s, e) => _mainWindow.Dispatcher.Invoke(() => _mainWindow.LoadWallpaper("fractal-tetrahedron")));
         wallpaperMenu.DropDownItems.Add(new ToolStripSeparator());
         wallpaperMenu.DropDownItems.Add("Audio Visualizer", null,
             (s, e) => _mainWindow.Dispatcher.Invoke(() => _mainWindow.LoadWallpaper("audio-visualizer")));

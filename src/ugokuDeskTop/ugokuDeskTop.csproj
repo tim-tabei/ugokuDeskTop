@@ -15,7 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="Wallpapers\**\*">
+    <Content Include="Wallpapers\**\*" Exclude="Wallpapers\node_modules\**;Wallpapers\*\src\**;Wallpapers\package*.json;Wallpapers\*.mjs;Wallpapers\tsconfig.json;Wallpapers\*.d.ts">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
