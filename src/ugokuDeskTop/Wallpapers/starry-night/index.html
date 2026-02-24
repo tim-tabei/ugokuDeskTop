@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        * { margin: 0; padding: 0; overflow: hidden; }
+        body {
+            width: 100vw;
+            height: 100vh;
+            background: linear-gradient(to bottom, #050510 0%, #0a1628 50%, #121d3d 100%);
+        }
+
+        #stars { position: fixed; inset: 0; }
+
+        .star {
+            position: absolute;
+            border-radius: 50%;
+            background: #fff;
+            will-change: opacity;
+            animation: twinkle var(--duration) ease-in-out infinite;
+            animation-delay: var(--delay);
+            width: var(--size);
+            height: var(--size);
+            opacity: var(--base-opacity);
+        }
+
+        @keyframes twinkle {
+            0%, 100% { opacity: var(--base-opacity); }
+            50% { opacity: var(--min-opacity); }
+        }
+
+        .shooting-star {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            background: #fff;
+            border-radius: 50%;
+            opacity: 0;
+            will-change: transform, opacity;
+        }
+
+        .shooting-star.active {
+            animation: shoot var(--shoot-duration) linear forwards;
+        }
+
+        @keyframes shoot {
+            0% {
+                opacity: 1;
+                transform: translate(0, 0) scale(1);
+                box-shadow: 0 0 4px 1px rgba(255,255,255,0.6),
+                            -30px 0 20px 2px rgba(180,200,255,0.3),
+                            -60px 0 40px 1px rgba(180,200,255,0.1);
+            }
+            70% {
+                opacity: 0.8;
+                transform: translate(var(--dx), var(--dy)) scale(0.8);
+                box-shadow: 0 0 2px 1px rgba(255,255,255,0.4),
+                            -20px 0 15px 1px rgba(180,200,255,0.2);
+            }
+            100% {
+                opacity: 0;
+                transform: translate(calc(var(--dx) * 1.4), calc(var(--dy) * 1.4)) scale(0.3);
+                box-shadow: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="stars"></div>
+    <script src="main.js"></script>
+</body>
+</html>

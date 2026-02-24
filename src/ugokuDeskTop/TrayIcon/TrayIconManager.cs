@@ -30,6 +30,8 @@ internal class TrayIconManager : IDisposable
 
         // 壁紙選択サブメニュー
         var wallpaperMenu = new ToolStripMenuItem("壁紙を選択");
+        wallpaperMenu.DropDownItems.Add("Starry Night", null,
+            (s, e) => _mainWindow.Dispatcher.Invoke(() => _mainWindow.LoadWallpaper("starry-night")));
         wallpaperMenu.DropDownItems.Add("Particles", null,
             (s, e) => _mainWindow.Dispatcher.Invoke(() => _mainWindow.LoadWallpaper("particles")));
         wallpaperMenu.DropDownItems.Add("Gradient Wave", null,
