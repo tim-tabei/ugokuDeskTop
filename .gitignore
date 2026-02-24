@@ -1,0 +1,24 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.vs/
+.vs/
+
+## NuGet
+*.nupkg
+packages/
+
+## Build
+publish/
+
+## WebView2 user data
+WebView2Data/
+
+## IDE
+.idea/
+*.sln.DotSettings.user
+
+## Claude Code
+.claude/

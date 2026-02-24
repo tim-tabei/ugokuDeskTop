@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        * { margin: 0; padding: 0; overflow: hidden; }
+        body { width: 100vw; height: 100vh; background: #000; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, canvas.width, canvas.height);
+        }
+        resize();
+        window.addEventListener('resize', resize);
+
+        // 頂点シェーダー (フルスクリーン四角形)
+        const vertexSource = `
+            attribute vec2 position;
+            void main() {
+                gl_Position = vec4(position, 0.0, 1.0);
+            }
+        `;
+
+        // フラグメントシェーダー (Shadertoy風のプラズマエフェクト)
+        const fragmentSource = `
+            precision highp float;
+            uniform float iTime;
+            uniform vec2 iResolution;
+
+            void main() {
+                vec2 uv = gl_FragCoord.xy / iResolution.xy;
+                vec2 p = uv * 2.0 - 1.0;
+                p.x *= iResolution.x / iResolution.y;
+
+                float t = iTime * 0.5;
+
+                // プラズマ計算
+                float v1 = sin(p.x * 3.0 + t);
+                float v2 = sin(3.0 * (p.x * sin(t * 0.5) + p.y * cos(t * 0.3)) + t);
+                float v3 = sin(sqrt(p.x * p.x + p.y * p.y + 1.0) * 4.0 - t * 2.0);
+                float v4 = sin(sqrt(p.x * p.x * 1.5 + p.y * p.y * 0.5) * 5.0 + t);
+
+                float v = v1 + v2 + v3 + v4;
+
+                // 色マッピング
+                vec3 col;
+                col.r = sin(v * 0.5 + t) * 0.5 + 0.5;
+                col.g = sin(v * 0.5 + t + 2.094) * 0.5 + 0.5;
+                col.b = sin(v * 0.5 + t + 4.189) * 0.5 + 0.5;
+
+                // ビネット効果
+                float vignette = 1.0 - dot(uv - 0.5, uv - 0.5) * 0.8;
+                col *= vignette;
+
+                // 明るさ調整（暗めにして壁紙として見やすく）
+                col *= 0.6;
+
+                gl_FragColor = vec4(col, 1.0);
+            }
+        `;
+
+        function createShader(type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error(gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        const vertexShader = createShader(gl.VERTEX_SHADER, vertexSource);
+        const fragmentShader = createShader(gl.FRAGMENT_SHADER, fragmentSource);
+
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            console.error(gl.getProgramInfoLog(program));
+        }
+
+        gl.useProgram(program);
+
+        // フルスクリーン四角形
+        const vertices = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+        const buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+        const positionLocation = gl.getAttribLocation(program, 'position');
+        gl.enableVertexAttribArray(positionLocation);
+        gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+        const timeLocation = gl.getUniformLocation(program, 'iTime');
+        const resolutionLocation = gl.getUniformLocation(program, 'iResolution');
+
+        const startTime = performance.now();
+
+        function render() {
+            const time = (performance.now() - startTime) / 1000.0;
+
+            gl.uniform1f(timeLocation, time);
+            gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
+
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+            requestAnimationFrame(render);
+        }
+
+        render();
+    </script>
+</body>
+</html>

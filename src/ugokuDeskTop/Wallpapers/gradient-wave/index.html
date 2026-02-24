@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        * { margin: 0; padding: 0; overflow: hidden; }
+        body { width: 100vw; height: 100vh; background: #000; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resize();
+        window.addEventListener('resize', resize);
+
+        let time = 0;
+
+        function draw() {
+            const w = canvas.width;
+            const h = canvas.height;
+
+            // 背景グラデーション
+            const bgGrad = ctx.createLinearGradient(0, 0, w, h);
+            const hue1 = (time * 10) % 360;
+            const hue2 = (hue1 + 60) % 360;
+            bgGrad.addColorStop(0, `hsl(${hue1}, 50%, 8%)`);
+            bgGrad.addColorStop(1, `hsl(${hue2}, 50%, 12%)`);
+            ctx.fillStyle = bgGrad;
+            ctx.fillRect(0, 0, w, h);
+
+            // 複数の波を描画
+            const waves = [
+                { amplitude: 80, frequency: 0.008, speed: 0.02, yOffset: 0.5, hue: hue1, alpha: 0.3 },
+                { amplitude: 60, frequency: 0.012, speed: 0.03, yOffset: 0.55, hue: hue1 + 30, alpha: 0.25 },
+                { amplitude: 100, frequency: 0.006, speed: 0.015, yOffset: 0.45, hue: hue2, alpha: 0.2 },
+                { amplitude: 40, frequency: 0.015, speed: 0.04, yOffset: 0.6, hue: hue2 + 30, alpha: 0.35 },
+            ];
+
+            for (const wave of waves) {
+                ctx.beginPath();
+                ctx.moveTo(0, h);
+
+                for (let x = 0; x <= w; x += 2) {
+                    const y = h * wave.yOffset +
+                        Math.sin(x * wave.frequency + time * wave.speed) * wave.amplitude +
+                        Math.sin(x * wave.frequency * 0.5 + time * wave.speed * 1.5) * wave.amplitude * 0.5;
+                    ctx.lineTo(x, y);
+                }
+
+                ctx.lineTo(w, h);
+                ctx.closePath();
+
+                const grad = ctx.createLinearGradient(0, h * wave.yOffset - wave.amplitude, 0, h);
+                grad.addColorStop(0, `hsla(${wave.hue}, 70%, 50%, ${wave.alpha})`);
+                grad.addColorStop(1, `hsla(${wave.hue + 20}, 70%, 30%, ${wave.alpha * 0.5})`);
+                ctx.fillStyle = grad;
+                ctx.fill();
+            }
+
+            time += 1;
+            requestAnimationFrame(draw);
+        }
+
+        draw();
+    </script>
+</body>
+</html>
