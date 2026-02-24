@@ -7,10 +7,13 @@ namespace ugokuDeskTop.Services;
 internal class AudioCaptureService : IDisposable
 {
     private WasapiLoopbackCapture? _capture;
-    private const int DftSize = 512;
+    private const int DftSize = 4096;   // 分解能 11.7Hz/bin（低音域の分離を改善）
+    private const int HopSize = 512;   // DFT 更新間隔（~10.7ms @ 48kHz）
     private const int BandCount = 64;
-    private readonly float[] _sampleBuffer = new float[2048];
-    private int _sampleBufferPos;
+    private readonly float[] _ringBuffer = new float[DftSize];
+    private int _ringPos;
+    private int _totalSamples;
+    private int _samplesSinceLastDft;
     private readonly float[] _bands = new float[BandCount];
     private readonly object _lock = new();
     private bool _running;
@@ -75,14 +78,24 @@ internal class AudioCaptureService : IDisposable
             }
             sample /= channels;
 
-            _sampleBuffer[_sampleBufferPos] = sample;
-            _sampleBufferPos++;
+            // リングバッファに書き込み
+            _ringBuffer[_ringPos] = sample;
+            _ringPos = (_ringPos + 1) % DftSize;
+            _totalSamples++;
+            _samplesSinceLastDft++;
 
-            // 512サンプル溜まったら DFT 実行
-            if (_sampleBufferPos >= DftSize)
+            // HopSize (512) サンプルごとに DFT 実行（窓をスライド）
+            // 2048 サンプル窓を保ちつつ ~10.7ms 間隔で更新
+            if (_samplesSinceLastDft >= HopSize && _totalSamples >= DftSize)
             {
-                ComputeDft(_sampleBuffer, _sampleBufferPos);
-                _sampleBufferPos = 0;
+                // リングバッファから最新 DftSize サンプルを時系列順に取り出す
+                float[] samples = new float[DftSize];
+                for (int j = 0; j < DftSize; j++)
+                {
+                    samples[j] = _ringBuffer[(_ringPos + j) % DftSize];
+                }
+                ComputeDft(samples, DftSize);
+                _samplesSinceLastDft = 0;
             }
         }
     }
@@ -103,27 +116,48 @@ internal class AudioCaptureService : IDisposable
             windowed[i] = samples[i] * window;
         }
 
-        // DFT で各バンドの振幅を直接計算（線形ビンマッピング、上限 18kHz）
+        // 3帯域分割マッピング（各帯域内は対数、浮動小数点ビン）
+        //   Low  bands  0-11 (12本):   30 -  200 Hz  キック・ベース
+        //   Mid  bands 12-53 (42本):  200 - 4000 Hz  ボーカル・スネア・ギター
+        //   High bands 54-63 (10本): 4000 -12000 Hz  ハイハット・シンバル
         int halfN = N / 2;
         float freqPerBin = (float)_sampleRate / N;
 
-        int maxBin = (int)(18000.0f / freqPerBin);
-        if (maxBin >= halfN) maxBin = halfN - 1;
-        if (maxBin < 1) maxBin = 1;
+        const int LowEnd = 12;   // bands 0-11
+        const int MidEnd = 54;   // bands 12-53
 
         float[] magnitudes = new float[BandCount];
 
         for (int band = 0; band < BandCount; band++)
         {
-            // 線形マッピング: バンド 0 → ビン 1, バンド 63 → maxBin
-            int k = 1 + band * (maxBin - 1) / BandCount;
-            if (k >= halfN) k = halfN - 1;
+            float centerFreq;
+            if (band < LowEnd)
+            {
+                // Low: 30-200 Hz (12 bands)
+                float t = (band + 0.5f) / LowEnd;
+                centerFreq = 30.0f * MathF.Pow(200.0f / 30.0f, t);
+            }
+            else if (band < MidEnd)
+            {
+                // Mid: 200-4000 Hz (42 bands)
+                float t = (band - LowEnd + 0.5f) / (MidEnd - LowEnd);
+                centerFreq = 200.0f * MathF.Pow(4000.0f / 200.0f, t);
+            }
+            else
+            {
+                // High: 4000-12000 Hz (10 bands)
+                float t = (band - MidEnd + 0.5f) / (BandCount - MidEnd);
+                centerFreq = 4000.0f * MathF.Pow(12000.0f / 4000.0f, t);
+            }
+
+            float kf = centerFreq / freqPerBin;
+            kf = Math.Clamp(kf, 1.0f, halfN - 1.0f);
 
             float real = 0.0f;
             float imag = 0.0f;
             for (int n = 0; n < N; n++)
             {
-                float angle = 2.0f * MathF.PI * k * n / N;
+                float angle = 2.0f * MathF.PI * kf * n / N;
                 real += windowed[n] * MathF.Cos(angle);
                 imag -= windowed[n] * MathF.Sin(angle);
             }
@@ -152,8 +186,8 @@ internal class AudioCaptureService : IDisposable
                 float val = (dB - DB_MIN) / (DB_MAX - DB_MIN);
                 val = Math.Clamp(val, 0.0f, 1.0f);
 
-                // スムージング: 前フレーム 55% + 今フレーム 45%
-                _bands[i] = _bands[i] * 0.55f + val * 0.45f;
+                // スムージング: 前フレーム 30% + 今フレーム 70%（低レイテンシ）
+                _bands[i] = _bands[i] * 0.3f + val * 0.7f;
             }
         }
 
