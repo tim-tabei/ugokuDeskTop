@@ -20,5 +20,12 @@ WebView2Data/
 .idea/
 *.sln.DotSettings.user
 
+## Node.js (Wallpapers build)
+node_modules/
+*.js.map
+
+## Wallpaper build output (generated from TypeScript)
+src/ugokuDeskTop/Wallpapers/*/main.js
+
 ## Claude Code
 .claude/
