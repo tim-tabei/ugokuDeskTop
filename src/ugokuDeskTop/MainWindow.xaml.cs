@@ -23,11 +23,22 @@ public partial class MainWindow : Window
     private float[]? _latestFrequencyData;
     private readonly object _audioLock = new();
     private FileSystemWatcher? _fileWatcher;
+    private EqualizerApoService? _apoService;
 
     public MainWindow()
     {
         InitializeComponent();
         _config = WallpaperConfig.Load();
+
+        // Equalizer APO 連携（トレイメニュー作成前に初期化する必要がある）
+        _apoService = new EqualizerApoService();
+        if (_apoService.Initialize())
+        {
+            _apoService.Enabled = _config.ApoEnabled;
+            _apoService.FilterMode = _config.ApoFilterMode;
+            System.Diagnostics.Debug.WriteLine("[ugokuDeskTop] Equalizer APO detected and configured");
+        }
+
         Loaded += MainWindow_Loaded;
     }
 
@@ -91,20 +102,56 @@ public partial class MainWindow : Window
     {
         if (!_webViewReady) return;
 
-        float[]? data;
-        lock (_audioLock)
-        {
-            data = _latestFrequencyData;
-            _latestFrequencyData = null;
-        }
-
-        if (data == null) return;
-
         try
         {
-            string json = JsonSerializer.Serialize(data);
+            // マウス位置の取得（音声データの有無に関係なく毎フレーム）
+            Win32Api.GetCursorPos(out var cursor);
+            int vx = Win32Api.GetSystemMetrics(Win32Api.SM_XVIRTUALSCREEN);
+            int vy = Win32Api.GetSystemMetrics(Win32Api.SM_YVIRTUALSCREEN);
+            int vw = Win32Api.GetSystemMetrics(Win32Api.SM_CXVIRTUALSCREEN);
+            int vh = Win32Api.GetSystemMetrics(Win32Api.SM_CYVIRTUALSCREEN);
+            double mx = (double)(cursor.X - vx) / vw;
+            double my = (double)(cursor.Y - vy) / vh;
+
+            // Equalizer APO フィルター更新（音声データの有無に関係なく常時実行）
+            // desktopVisible 判定が不安定なため、APO有効時は常にフィルターを適用する
+            _apoService?.UpdateFilter(mx, my);
+
+            // APO 状態を WebView2 に送信
+            if (_apoService is { IsAvailable: true, Enabled: true })
+            {
+                await webView.CoreWebView2.ExecuteScriptAsync(
+                    $"if(window.onApoState) window.onApoState({_apoService.IsActive.ToString().ToLower()}," +
+                    $"'{_apoService.CurrentFilterType}'," +
+                    $"{_apoService.CurrentFrequencyHz:F0},{_apoService.CurrentQ:F2}," +
+                    $"{_apoService.CurrentGainDb:F1})");
+            }
+
+            // 音声データの送信
+            float[]? data;
+            lock (_audioLock)
+            {
+                data = _latestFrequencyData;
+                _latestFrequencyData = null;
+            }
+
+            if (data != null)
+            {
+                string json = JsonSerializer.Serialize(data);
+                await webView.CoreWebView2.ExecuteScriptAsync(
+                    $"if(window.onFrequencyData) window.onFrequencyData({json})");
+            }
+
+            // デスクトップ状態 + マウス位置を送信
+            var fg = Win32Api.GetForegroundWindow();
+            var className = new System.Text.StringBuilder(256);
+            Win32Api.GetClassName(fg, className, 256);
+            string cls = className.ToString();
+            bool visible = cls is "Progman" or "WorkerW"
+                or "SHELLDLL_DefView" or "Shell_TrayWnd";
+
             await webView.CoreWebView2.ExecuteScriptAsync(
-                $"if(window.onFrequencyData) window.onFrequencyData({json})");
+                $"if(window.onDesktopState) window.onDesktopState({visible.ToString().ToLower()},{mx:F4},{my:F4})");
         }
         catch
         {
@@ -180,6 +227,34 @@ public partial class MainWindow : Window
         if (!_isEmbedded) return;
         WallpaperHelper.DetachWallpaper(_windowHandle);
         _isEmbedded = false;
+    }
+
+    // --- Equalizer APO 連携 ---
+    public bool IsApoAvailable => _apoService?.IsAvailable ?? false;
+    public bool IsApoEnabled => _apoService?.Enabled ?? false;
+
+    public void SetApoEnabled(bool enabled)
+    {
+        if (_apoService == null) return;
+        _apoService.Enabled = enabled;
+        _config.ApoEnabled = enabled;
+        _config.Save();
+    }
+
+    public string ApoFilterMode => _apoService?.FilterMode ?? "LP/HP";
+
+    public void SetApoFilterMode(string mode)
+    {
+        if (_apoService == null) return;
+        _apoService.FilterMode = mode;
+        _config.ApoFilterMode = mode;
+        _config.Save();
+    }
+
+    public void DisableApoFilter()
+    {
+        _apoService?.DisableFilter();
+        _apoService?.Dispose();
     }
 
     // --- Hot Reload: 壁紙ディレクトリの .js/.html/.css を監視 ---

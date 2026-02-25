@@ -7,6 +7,8 @@ internal class WallpaperConfig
 {
     public string CurrentWallpaper { get; set; } = "particles";
     public string? CustomUrl { get; set; }
+    public bool ApoEnabled { get; set; } = false;
+    public string ApoFilterMode { get; set; } = "LP/HP";
 
     private static readonly string ConfigDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

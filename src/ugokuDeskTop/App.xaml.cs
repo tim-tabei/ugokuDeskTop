@@ -20,6 +20,7 @@ public partial class App : System.Windows.Application
     protected override void OnExit(System.Windows.ExitEventArgs e)
     {
         _mainWindow?.StopAudioCapture();
+        _mainWindow?.DisableApoFilter();
         _mainWindow?.DetachWallpaper();
         _trayManager?.Dispose();
         base.OnExit(e);

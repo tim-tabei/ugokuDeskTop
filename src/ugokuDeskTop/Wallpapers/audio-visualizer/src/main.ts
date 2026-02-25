@@ -90,10 +90,140 @@ function midEnergy(): number { return bandEnergy(28, 54); }
 /** ハイ (4000-12000 Hz): band 54-63 — ハイハット・シンバル */
 function highEnergy(): number { return bandEnergy(54, 64); }
 
+// --- デスクトップ状態（C# から受信）---
+let desktopVisible = false;
+let mouseNormX = 0.5; // 0=画面左端, 1=右端
+let mouseNormY = 0.5; // 0=画面上端, 1=下端
+
+// --- APO 状態（C# から受信）---
+let apoActive = false;
+let apoFilterType = 'OFF'; // 'LP' | 'HP' | 'BP' | 'NO' | 'PK' | 'LSC' | 'HSC' | 'OFF'
+let apoFreqHz = 0;
+let apoQ = 0;
+let apoGainDb = 0;
+
 // C# からの呼び出しポイント
 (window as any).onFrequencyData = (data: number[]): void => {
   frequencyData = data;
 };
+
+(window as any).onDesktopState = (
+  visible: boolean,
+  mx: number,
+  my: number,
+): void => {
+  desktopVisible = visible;
+  mouseNormX = mx;
+  mouseNormY = my;
+};
+
+(window as any).onApoState = (
+  active: boolean,
+  filterType: string,
+  freqHz: number,
+  q: number,
+  gainDb: number,
+): void => {
+  apoActive = active;
+  apoFilterType = filterType;
+  apoFreqHz = freqHz;
+  apoQ = q;
+  apoGainDb = gainDb || 0;
+};
+
+/**
+ * バンドインデックスから周波数(Hz)を逆算する。
+ * AudioCaptureService の3帯域対数マッピングに対応。
+ */
+function bandToFrequency(band: number): number {
+  if (band < 12) {
+    const t = (band + 0.5) / 12;
+    return 30 * Math.pow(200 / 30, t);
+  } else if (band < 54) {
+    const t = (band - 12 + 0.5) / 42;
+    return 200 * Math.pow(4000 / 200, t);
+  } else {
+    const t = (band - 54 + 0.5) / 10;
+    return 4000 * Math.pow(12000 / 4000, t);
+  }
+}
+
+/**
+ * デスクトップ表示中に、マウスX位置に応じて特定バンドをブーストする EQ 倍率を返す。
+ * APO 連携が有効な場合は、実際のローパスフィルター応答を模擬した減衰を返す。
+ */
+function eqMultiplier(bandIndex: number, totalBands: number): number {
+  if (apoActive) {
+    const freq = bandToFrequency(bandIndex);
+    const ratio = freq / apoFreqHz;
+
+    switch (apoFilterType) {
+      case 'LP':
+        // ローパス: カットオフ以上を減衰
+        if (ratio <= 1) return 1;
+        return 1 / (1 + Math.pow(ratio, apoQ * 2));
+
+      case 'HP':
+        // ハイパス: カットオフ以下を減衰
+        if (ratio >= 1) return 1;
+        return 1 / (1 + Math.pow(1 / ratio, apoQ * 2));
+
+      case 'BP': {
+        // バンドパス: 中心周波数付近のみ通す
+        const logDist = Math.abs(Math.log2(ratio));
+        const bw = 1 / apoQ; // Q が高いほど帯域が狭い
+        return Math.exp(-logDist * logDist / (bw * bw) * 2);
+      }
+
+      case 'NO': {
+        // ノッチ: 中心周波数付近を除去
+        const logDist2 = Math.abs(Math.log2(ratio));
+        const bw2 = 1 / apoQ;
+        const notch = Math.exp(-logDist2 * logDist2 / (bw2 * bw2) * 2);
+        return 1 - notch * 0.9; // 完全には消さない（視覚的に）
+      }
+
+      case 'PK': {
+        // ピーキングEQ: 中心周波数付近をブースト/カット
+        const logDist3 = Math.abs(Math.log2(ratio));
+        const bw3 = 1 / apoQ;
+        const shape = Math.exp(-logDist3 * logDist3 / (bw3 * bw3) * 2);
+        const gainLinear = Math.pow(10, apoGainDb / 20);
+        return 1 + (gainLinear - 1) * shape;
+      }
+
+      case 'LSC': {
+        // ローシェルフ: コーナー周波数以下をブースト/カット
+        const gainLinear2 = Math.pow(10, apoGainDb / 20);
+        if (ratio <= 0.5) return gainLinear2;
+        if (ratio >= 2) return 1;
+        // トランジション
+        const t = (Math.log2(ratio) + 1) / 2; // 0..1
+        return gainLinear2 + (1 - gainLinear2) * t;
+      }
+
+      case 'HSC': {
+        // ハイシェルフ: コーナー周波数以上をブースト/カット
+        const gainLinear3 = Math.pow(10, apoGainDb / 20);
+        if (ratio >= 2) return gainLinear3;
+        if (ratio <= 0.5) return 1;
+        const t2 = (Math.log2(ratio) + 1) / 2;
+        return 1 + (gainLinear3 - 1) * t2;
+      }
+
+      default:
+        return 1;
+    }
+  }
+
+  // 通常モード: マウスベースの視覚EQ
+  const eqCenter = mouseNormX * totalBands;
+  const eqWidth = 10;
+  const dist = Math.abs(bandIndex - eqCenter);
+  const boost = Math.max(0, 1 - dist / eqWidth);
+  const intensity = (1 - mouseNormY) * 3;
+  return 1 + boost * intensity;
+}
 
 // --- 描画ループ ---
 function draw(): void {
@@ -142,6 +272,7 @@ function draw(): void {
   }
 
   drawWaveform(w, h, bands, bgHue);
+  drawApoOverlay(w, h);
 
   time++;
   requestAnimationFrame(draw);
@@ -158,8 +289,9 @@ function drawRadialBars(
 ): void {
   for (let i = 0; i < bands; i++) {
     const angle = (i / bands) * Math.PI * 2 - Math.PI / 2;
-    const value = smoothedData[i];
-    const peak = peakData[i];
+    const eq = eqMultiplier(i, bands);
+    const value = Math.min(smoothedData[i] * eq, 1);
+    const peak = Math.min(peakData[i] * eq, 1);
     const barLength = value * baseRadius * 2.5;
     const peakPos = peak * baseRadius * 2.5;
 
@@ -235,8 +367,9 @@ function drawWaveform(
   ctx.beginPath();
   ctx.moveTo(0, waveY);
   for (let x = 0; x <= w; x += 3) {
-    const bandIdx = Math.floor((x / w) * bands);
-    const value = smoothedData[Math.min(bandIdx, bands - 1)];
+    const bandIdx = Math.min(Math.floor((x / w) * bands), bands - 1);
+    const eq = eqMultiplier(bandIdx, bands);
+    const value = Math.min(smoothedData[bandIdx] * eq, 1);
     const wave = Math.sin(x * 0.02 + time * 0.05) * 10;
     const y = waveY - value * waveHeight + wave;
     ctx.lineTo(x, y);
@@ -291,6 +424,128 @@ function updateParticles(
 
   // パーティクル数制限
   while (particles.length > 200) particles.shift();
+}
+
+// --- APO フィルター状態オーバーレイ ---
+const filterLabels: Record<string, string> = {
+  LP: 'LOW PASS',
+  HP: 'HIGH PASS',
+  BP: 'BAND PASS',
+  NO: 'NOTCH',
+  PK: 'PEAKING EQ',
+  LSC: 'LOW SHELF',
+  HSC: 'HIGH SHELF',
+};
+
+function drawApoOverlay(w: number, h: number): void {
+  if (!apoActive) return;
+
+  const overlayX = w * 0.35;
+  const overlayY = h * 0.04;
+  const barWidth = w * 0.3;
+
+  // 背景パネル
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(overlayX - 12, overlayY - 8, barWidth + 24, 56, 8);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.fill();
+
+  // フィルター情報テキスト
+  ctx.font = '13px monospace';
+  ctx.fillStyle = 'rgba(255, 200, 100, 0.9)';
+  ctx.textAlign = 'left';
+
+  const label = filterLabels[apoFilterType] || apoFilterType;
+  const freqStr =
+    apoFreqHz >= 1000
+      ? `${(apoFreqHz / 1000).toFixed(1)}kHz`
+      : `${apoFreqHz.toFixed(0)}Hz`;
+
+  // フィルタータイプに応じてパラメータ表示を変える
+  let paramStr: string;
+  if (apoFilterType === 'PK' || apoFilterType === 'LSC' || apoFilterType === 'HSC') {
+    const sign = apoGainDb >= 0 ? '+' : '';
+    paramStr = `${label}  Fc: ${freqStr}  ${sign}${apoGainDb.toFixed(1)}dB`;
+  } else {
+    paramStr = `${label}  Fc: ${freqStr}  Q: ${apoQ.toFixed(1)}`;
+  }
+  ctx.fillText(paramStr, overlayX, overlayY + 14);
+
+  // 周波数位置バー
+  const barY = overlayY + 28;
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+  ctx.fillRect(overlayX, barY, barWidth, 6);
+
+  // マーカー（周波数の位置）
+  const freqNorm = Math.log(apoFreqHz / 80) / Math.log(16000 / 80);
+  const markerX = overlayX + Math.max(0, Math.min(1, freqNorm)) * barWidth;
+
+  // フィルタータイプに応じた影響範囲の描画
+  switch (apoFilterType) {
+    case 'LP':
+      // ローパス: マーカーより右がカット
+      ctx.fillStyle = 'rgba(255, 100, 50, 0.3)';
+      ctx.fillRect(markerX, barY, overlayX + barWidth - markerX, 6);
+      break;
+    case 'HP':
+      // ハイパス: マーカーより左がカット
+      ctx.fillStyle = 'rgba(255, 100, 50, 0.3)';
+      ctx.fillRect(overlayX, barY, markerX - overlayX, 6);
+      break;
+    case 'BP': {
+      // バンドパス: マーカー周辺を通す（それ以外をカット）
+      const bpWidth = barWidth * (0.5 / apoQ);
+      ctx.fillStyle = 'rgba(255, 100, 50, 0.3)';
+      ctx.fillRect(overlayX, barY, Math.max(0, markerX - bpWidth / 2 - overlayX), 6);
+      ctx.fillRect(markerX + bpWidth / 2, barY, overlayX + barWidth - markerX - bpWidth / 2, 6);
+      // 通過帯域
+      ctx.fillStyle = 'rgba(100, 255, 150, 0.3)';
+      ctx.fillRect(Math.max(overlayX, markerX - bpWidth / 2), barY, bpWidth, 6);
+      break;
+    }
+    case 'NO': {
+      // ノッチ: マーカー周辺を除去
+      const noWidth = barWidth * (0.3 / apoQ);
+      ctx.fillStyle = 'rgba(255, 100, 50, 0.4)';
+      ctx.fillRect(Math.max(overlayX, markerX - noWidth / 2), barY, noWidth, 6);
+      break;
+    }
+    case 'PK': {
+      // ピーキング: ブースト(緑)/カット(赤)
+      const pkWidth = barWidth * (0.4 / apoQ);
+      const color = apoGainDb >= 0 ? 'rgba(100, 255, 150, 0.4)' : 'rgba(255, 100, 50, 0.4)';
+      ctx.fillStyle = color;
+      ctx.fillRect(Math.max(overlayX, markerX - pkWidth / 2), barY, pkWidth, 6);
+      break;
+    }
+    case 'LSC':
+      // ローシェルフ: マーカーより左を増減
+      ctx.fillStyle = apoGainDb >= 0 ? 'rgba(100, 255, 150, 0.3)' : 'rgba(255, 100, 50, 0.3)';
+      ctx.fillRect(overlayX, barY, markerX - overlayX, 6);
+      break;
+    case 'HSC':
+      // ハイシェルフ: マーカーより右を増減
+      ctx.fillStyle = apoGainDb >= 0 ? 'rgba(100, 255, 150, 0.3)' : 'rgba(255, 100, 50, 0.3)';
+      ctx.fillRect(markerX, barY, overlayX + barWidth - markerX, 6);
+      break;
+  }
+
+  // マーカードット
+  ctx.beginPath();
+  ctx.arc(markerX, barY + 3, 5, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255, 200, 100, 0.9)';
+  ctx.fill();
+
+  // 周波数ラベル（バーの下）
+  ctx.font = '10px monospace';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+  ctx.textAlign = 'center';
+  ctx.fillText('80', overlayX, barY + 18);
+  ctx.fillText('1k', overlayX + barWidth * 0.5, barY + 18);
+  ctx.fillText('16k', overlayX + barWidth, barY + 18);
+
+  ctx.restore();
 }
 
 // --- 開始 ---
